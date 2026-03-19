@@ -1,0 +1,335 @@
+<!DOCTYPE html>
+<html lang="ca">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>La Murga Lleida — Gestió Econòmica</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.2.0/umd/react.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.2.0/umd/react-dom.production.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/babel-standalone/7.23.2/babel.min.js"></script>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/recharts/2.8.0/Recharts.min.js"></script>
+  <style>
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: 'Inter', system-ui, sans-serif; background: #F8F7FF; }
+    input, select, button { font-family: inherit; }
+  </style>
+</head>
+<body>
+<div id="root"></div>
+<script type="text/babel">
+const { useState, useEffect } = React;
+const { BarChart, Bar, XAxis, YAxis, Tooltip, PieChart, Pie, Cell, Legend, ResponsiveContainer } = Recharts;
+
+const API = "https://script.google.com/macros/s/AKfycbz2NCvCic7DTkDdVr2R60usunWXdUbnIcTXp5o0iZldNPhtLt6xk26aDotzU_A3BmxF/exec";
+const ANTHROPIC_API_KEY = "POSA_AQUI_LA_TEVA_API_KEY"; // ← canvia això!
+
+const P = "#7C3AED", PL = "#EDE9FE", PD = "#5B21B6";
+const CATS_I = ["Quotes de socis","Subvencions","Donacions","Actuacions","Venda de productes","Altres ingressos"];
+const CATS_D = ["Material","Vestuari","Música / drets","Transport","Menjars / àpats","Lloguer d'espais","Publicitat","Assegurances","Altres despeses"];
+const COLORS = ["#7C3AED","#059669","#A78BFA","#6D28D9","#C4B5FD","#4C1D95","#8B5CF6","#10B981","#5B21B6"];
+const MONTHS = ["Gen","Feb","Mar","Abr","Mai","Jun","Jul","Ago","Set","Oct","Nov","Des"];
+const inp = {width:"100%",padding:"10px 12px",borderRadius:8,border:"1.5px solid #E5E7EB",fontSize:14,boxSizing:"border-box",outline:"none"};
+const fmt = n => Number(n||0).toFixed(2)+" €";
+
+async function apiCall(params) {
+  const url = API + "?" + Object.entries(params).map(([k,v]) => `${k}=${encodeURIComponent(v)}`).join("&");
+  const r = await fetch(url, { redirect:"follow" });
+  const text = await r.text();
+  const clean = text.replace(/^[\w$]+\(/, "").replace(/\);?\s*$/, "").trim();
+  return JSON.parse(clean);
+}
+
+function App() {
+  const [tab, setTab] = useState("resum");
+  const [movs, setMovs] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [scanning, setScanning] = useState(false);
+  const [msg, setMsg] = useState(null);
+  const [del, setDel] = useState(null);
+  const [fotoModal, setFotoModal] = useState(null);
+  const [form, setForm] = useState({ tipus:"ingres", data:new Date().toISOString().slice(0,10), categoria:"", descripcio:"", import:"" });
+  const [pendingFoto, setPendingFoto] = useState(null);
+  const [filter, setFilter] = useState("tots");
+
+  const toast = (type, text) => { setMsg({type,text}); setTimeout(()=>setMsg(null),4000); };
+
+  const load = async () => {
+    setLoading(true);
+    try {
+      const d = await apiCall({ action:"getAll" });
+      setMovs(d.moviments || []);
+    } catch(e) { toast("err","Error connectant amb Google Sheets: "+e.message); }
+    setLoading(false);
+  };
+
+  useEffect(() => { load(); }, []);
+
+  const toB64 = f => new Promise((res,rej) => {
+    const r = new FileReader();
+    r.onload = () => res(r.result.split(",")[1]);
+    r.onerror = rej;
+    r.readAsDataURL(f);
+  });
+
+  const handleScan = async (e) => {
+    const file = e.target.files[0]; e.target.value="";
+    if (!file) return;
+    setScanning(true);
+    try {
+      const b64 = await toB64(file);
+      const resp = await fetch("https://api.anthropic.com/v1/messages", {
+        method:"POST",
+        headers:{ "Content-Type":"application/json", "x-api-key": ANTHROPIC_API_KEY, "anthropic-version":"2023-06-01" },
+        body: JSON.stringify({ model:"claude-sonnet-4-20250514", max_tokens:400,
+          messages:[{ role:"user", content:[
+            { type:"image", source:{ type:"base64", media_type:file.type, data:b64 }},
+            { type:"text", text:`Extreu dades d'aquesta factura. Respon ÚNICAMENT JSON sense backticks: {"descripcio":"text curt","import":numero,"data":"YYYY-MM-DD","categoria":"una de: Material/Vestuari/Música \\/ drets/Transport/Menjars \\/ àpats/Lloguer d'espais/Publicitat/Assegurances/Altres despeses"}`}
+          ]}]
+        })
+      });
+      const d = await resp.json();
+      const txt = d.content.map(i=>i.text||"").join("").replace(/```json|```/g,"").trim();
+      const p = JSON.parse(txt);
+      setPendingFoto({ b64, name:file.name, mime:file.type });
+      setForm(f=>({...f, tipus:"despesa", descripcio:p.descripcio||f.descripcio, import:p.import?String(p.import):f.import, data:p.data||f.data, categoria:p.categoria||f.categoria}));
+      toast("ok","Factura llegida ✓");
+    } catch(err) { toast("err","No s'ha pogut llegir la factura."); }
+    setScanning(false);
+  };
+
+  const handleAfegir = async () => {
+    if (!form.categoria || !form.import || !form.descripcio) { toast("err","Omple tots els camps obligatoris."); return; }
+    setSaving(true);
+    try {
+      let factura_url = "";
+      if (pendingFoto) {
+        toast("ok","Pujant foto a Drive...");
+        try {
+          const up = await apiCall({ action:"upload", name:pendingFoto.name, base64:pendingFoto.b64, mime:pendingFoto.mime });
+          if (up.ok) factura_url = up.viewUrl;
+        } catch(e) { toast("err","La foto no s'ha pogut pujar."); }
+      }
+      const data = { ...form, import:parseFloat(form.import), factura_url };
+      const res = await apiCall({ action:"add", data: JSON.stringify(data) });
+      if (res.ok) {
+        toast("ok","Desat al Google Sheets ✓");
+        setForm({ tipus:"ingres", data:new Date().toISOString().slice(0,10), categoria:"", descripcio:"", import:"" });
+        setPendingFoto(null);
+        await load();
+        setTab("moviments");
+      } else toast("err", res.error || "Error desant.");
+    } catch(e) { toast("err","Error: "+e.message); }
+    setSaving(false);
+  };
+
+  const handleDelete = async (id) => {
+    try {
+      await apiCall({ action:"delete", id });
+      setMovs(prev=>prev.filter(m=>m["ID"]!==id));
+      toast("ok","Eliminat ✓");
+    } catch(e) { toast("err","Error eliminant."); }
+    setDel(null);
+  };
+
+  const getTipus = m => String(m["Tipus"]||"").toLowerCase().includes("ingr") ? "ingres" : "despesa";
+  const getImp   = m => parseFloat(m["Import"]||0);
+
+  const totalI = movs.filter(m=>getTipus(m)==="ingres").reduce((s,m)=>s+getImp(m),0);
+  const totalD = movs.filter(m=>getTipus(m)==="despesa").reduce((s,m)=>s+getImp(m),0);
+  const saldo  = totalI - totalD;
+
+  const barData = MONTHS.map((mes,i)=>({
+    mes,
+    Ingressos: movs.filter(m=>getTipus(m)==="ingres" && new Date(m["Data"]).getMonth()===i).reduce((s,m)=>s+getImp(m),0),
+    Despeses:  movs.filter(m=>getTipus(m)==="despesa"&& new Date(m["Data"]).getMonth()===i).reduce((s,m)=>s+getImp(m),0),
+  })).filter(d=>d.Ingressos>0||d.Despeses>0);
+
+  const catMap = {};
+  movs.filter(m=>getTipus(m)==="despesa").forEach(m=>{ const c=m["Categoria"]||"Altres"; catMap[c]=(catMap[c]||0)+getImp(m); });
+  const pieData = Object.entries(catMap).map(([name,value])=>({name,value}));
+  const movsFiltered = filter==="tots" ? movs : movs.filter(m=>getTipus(m)===filter);
+  const cats = form.tipus==="ingres" ? CATS_I : CATS_D;
+
+  return (
+    <div style={{fontFamily:"system-ui",background:"#F8F7FF",minHeight:"100vh",color:"#1a1a2e"}}>
+
+      {/* Header */}
+      <div style={{background:`linear-gradient(135deg,${P},${PD})`,padding:"14px 16px",display:"flex",alignItems:"center",justifyContent:"space-between",boxShadow:"0 2px 12px #7c3aed33"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:28}}>🎭</span>
+          <div>
+            <div style={{color:"white",fontWeight:800,fontSize:17}}>La Murga Lleida</div>
+            <div style={{color:"#C4B5FD",fontSize:10}}>GESTIÓ ECONÒMICA · Google Sheets</div>
+          </div>
+        </div>
+        <button onClick={load} disabled={loading} style={{background:"rgba(255,255,255,0.15)",color:"white",border:"none",borderRadius:8,padding:"7px 12px",cursor:"pointer",fontSize:12,fontWeight:600}}>
+          {loading?"⏳":"🔄 Actualitzar"}
+        </button>
+      </div>
+
+      {/* Tabs */}
+      <div style={{display:"flex",background:"white",boxShadow:"0 1px 4px #0001"}}>
+        {[["resum","📊","Resum"],["afegir","➕","Afegir"],["moviments","📋","Moviments"]].map(([k,ic,lb])=>(
+          <button key={k} onClick={()=>setTab(k)} style={{flex:1,padding:"11px 0",border:"none",background:"none",cursor:"pointer",fontWeight:tab===k?700:400,color:tab===k?P:"#6B7280",borderBottom:tab===k?`3px solid ${P}`:"3px solid transparent",fontSize:12}}>
+            {ic} {lb}
+          </button>
+        ))}
+      </div>
+
+      {/* Toast */}
+      {msg && <div style={{position:"fixed",top:68,left:"50%",transform:"translateX(-50%)",zIndex:300,background:msg.type==="ok"?"#059669":"#DC2626",color:"white",padding:"9px 22px",borderRadius:20,fontSize:12,fontWeight:600,boxShadow:"0 4px 16px #0003",whiteSpace:"nowrap",maxWidth:"90vw",textAlign:"center"}}>{msg.text}</div>}
+
+      {/* Foto modal */}
+      {fotoModal && (
+        <div onClick={()=>setFotoModal(null)} style={{position:"fixed",inset:0,background:"#000b",zIndex:400,display:"flex",alignItems:"center",justifyContent:"center",padding:20}}>
+          <div onClick={e=>e.stopPropagation()} style={{background:"white",borderRadius:16,padding:12,maxWidth:480,width:"100%"}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:8}}>
+              <span style={{fontWeight:700,fontSize:14}}>🧾 Factura</span>
+              <div style={{display:"flex",gap:10,alignItems:"center"}}>
+                <a href={fotoModal} target="_blank" rel="noreferrer" style={{fontSize:12,color:P,fontWeight:600}}>Obrir a Drive ↗</a>
+                <button onClick={()=>setFotoModal(null)} style={{background:"none",border:"none",cursor:"pointer",fontSize:18,color:"#9CA3AF"}}>✕</button>
+              </div>
+            </div>
+            <iframe src={fotoModal.replace("/view","/preview")} style={{width:"100%",height:420,border:"none",borderRadius:8}} title="Factura"/>
+          </div>
+        </div>
+      )}
+
+      {/* Delete modal */}
+      {del && (
+        <div style={{position:"fixed",inset:0,background:"#0006",zIndex:200,display:"flex",alignItems:"center",justifyContent:"center"}}>
+          <div style={{background:"white",borderRadius:16,padding:24,maxWidth:280,width:"90%",textAlign:"center"}}>
+            <div style={{fontSize:36,marginBottom:8}}>🗑️</div>
+            <div style={{fontWeight:700,marginBottom:8}}>Eliminar moviment?</div>
+            <div style={{fontSize:13,color:"#6B7280",marginBottom:20}}>S'eliminarà del Google Sheets.</div>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={()=>setDel(null)} style={{flex:1,padding:"10px",borderRadius:8,border:"1.5px solid #E5E7EB",background:"white",cursor:"pointer",fontWeight:600}}>Cancel·lar</button>
+              <button onClick={()=>handleDelete(del)} style={{flex:1,padding:"10px",borderRadius:8,border:"none",background:"#DC2626",color:"white",cursor:"pointer",fontWeight:600}}>Eliminar</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{padding:"16px",maxWidth:600,margin:"0 auto"}}>
+
+        {loading && <div style={{textAlign:"center",padding:60}}><div style={{fontSize:40,marginBottom:12}}>⏳</div><div style={{color:P,fontWeight:600}}>Connectant amb Google Sheets...</div></div>}
+
+        {/* RESUM */}
+        {!loading && tab==="resum" && (
+          <div>
+            <div style={{display:"grid",gridTemplateColumns:"1fr 1fr 1fr",gap:10,marginBottom:16}}>
+              {[
+                {lb:"Ingressos",v:totalI,c:"#059669",bg:"#ECFDF5",ic:"💰"},
+                {lb:"Despeses", v:totalD,c:"#DC2626",bg:"#FEF2F2",ic:"💸"},
+                {lb:"Saldo",    v:saldo, c:saldo>=0?"#059669":"#DC2626",bg:saldo>=0?"#ECFDF5":"#FEF2F2",ic:saldo>=0?"📈":"📉"},
+              ].map(c=>(
+                <div key={c.lb} style={{background:c.bg,borderRadius:12,padding:"14px 8px",textAlign:"center",boxShadow:"0 1px 4px #0001"}}>
+                  <div style={{fontSize:18,marginBottom:3}}>{c.ic}</div>
+                  <div style={{fontSize:9,color:"#6B7280",marginBottom:3,fontWeight:600,textTransform:"uppercase",letterSpacing:"0.5px"}}>{c.lb}</div>
+                  <div style={{fontWeight:800,color:c.c,fontSize:12}}>{fmt(c.v)}</div>
+                </div>
+              ))}
+            </div>
+            {movs.length===0 && <div style={{textAlign:"center",color:"#9CA3AF",padding:50}}><div style={{fontSize:46,marginBottom:10}}>📭</div><p style={{fontWeight:600}}>Cap moviment.</p></div>}
+            {barData.length>0 && (
+              <div style={{background:"white",borderRadius:14,padding:"14px 8px 8px",marginBottom:14,boxShadow:"0 1px 6px #0001"}}>
+                <div style={{fontWeight:700,marginBottom:10,fontSize:13,paddingLeft:8}}>Ingressos vs Despeses per mes</div>
+                <ResponsiveContainer width="100%" height={190}>
+                  <BarChart data={barData} margin={{top:0,right:8,left:-12,bottom:0}}>
+                    <XAxis dataKey="mes" tick={{fontSize:10}}/><YAxis tick={{fontSize:10}}/>
+                    <Tooltip formatter={v=>fmt(v)}/><Legend wrapperStyle={{fontSize:11}}/>
+                    <Bar dataKey="Ingressos" fill="#059669" radius={[4,4,0,0]}/>
+                    <Bar dataKey="Despeses" fill={P} radius={[4,4,0,0]}/>
+                  </BarChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+            {pieData.length>0 && (
+              <div style={{background:"white",borderRadius:14,padding:"14px 8px 8px",boxShadow:"0 1px 6px #0001"}}>
+                <div style={{fontWeight:700,marginBottom:10,fontSize:13,paddingLeft:8}}>Despeses per categoria</div>
+                <ResponsiveContainer width="100%" height={220}>
+                  <PieChart>
+                    <Pie data={pieData} dataKey="value" nameKey="name" cx="50%" cy="50%" outerRadius={75} label={({percent})=>`${(percent*100).toFixed(0)}%`} labelLine={false}>
+                      {pieData.map((_,i)=><Cell key={i} fill={COLORS[i%COLORS.length]}/>)}
+                    </Pie>
+                    <Legend wrapperStyle={{fontSize:10}}/><Tooltip formatter={v=>fmt(v)}/>
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+            )}
+          </div>
+        )}
+
+        {/* AFEGIR */}
+        {!loading && tab==="afegir" && (
+          <div style={{background:"white",borderRadius:16,padding:20,boxShadow:"0 1px 6px #0001"}}>
+            <div style={{fontWeight:800,fontSize:16,marginBottom:16,color:P}}>✏️ Nou moviment</div>
+            <div style={{display:"flex",background:"#F3F4F6",borderRadius:10,padding:4,marginBottom:14}}>
+              {["ingres","despesa"].map(t=>(
+                <button key={t} onClick={()=>setForm(f=>({...f,tipus:t,categoria:""}))} style={{flex:1,padding:"9px 0",border:"none",borderRadius:8,cursor:"pointer",background:form.tipus===t?P:"transparent",color:form.tipus===t?"white":"#6B7280",fontWeight:700,fontSize:13}}>
+                  {t==="ingres"?"💰 Ingrés":"💸 Despesa"}
+                </button>
+              ))}
+            </div>
+            <label style={{display:"block",background:pendingFoto?PL:"#F9FAFB",border:`2px dashed ${pendingFoto?P:"#D1D5DB"}`,borderRadius:12,padding:"13px",textAlign:"center",cursor:"pointer",marginBottom:14}}>
+              <input type="file" accept="image/*" onChange={handleScan} style={{display:"none"}}/>
+              {scanning
+                ? <><div style={{fontSize:20,marginBottom:3}}>⏳</div><span style={{color:P,fontWeight:600,fontSize:12}}>Llegint factura amb IA...</span></>
+                : pendingFoto
+                  ? <><div style={{fontSize:20,marginBottom:3}}>✅</div><span style={{color:P,fontWeight:600,fontSize:12}}>{pendingFoto.name}</span><br/><span style={{fontSize:10,color:"#9CA3AF"}}>Es pujarà a Drive en desar</span></>
+                  : <><div style={{fontSize:20,marginBottom:3}}>📸</div><span style={{color:"#6B7280",fontWeight:600,fontSize:12}}>Adjunta foto de factura (opcional)</span><br/><span style={{color:"#9CA3AF",fontSize:11}}>La IA llegirà les dades i es pujarà a Drive</span></>
+              }
+            </label>
+            <div style={{display:"grid",gap:12}}>
+              {[
+                {lb:"Data *", el:<input type="date" value={form.data} onChange={e=>setForm(f=>({...f,data:e.target.value}))} style={inp}/>},
+                {lb:"Categoria *", el:<select value={form.categoria} onChange={e=>setForm(f=>({...f,categoria:e.target.value}))} style={{...inp,background:"white"}}><option value="">Selecciona...</option>{cats.map(c=><option key={c}>{c}</option>)}</select>},
+                {lb:"Descripció *", el:<input type="text" placeholder="Ex: Compra vestuari cercavila" value={form.descripcio} onChange={e=>setForm(f=>({...f,descripcio:e.target.value}))} style={inp}/>},
+                {lb:"Import (€) *", el:<input type="number" placeholder="0.00" min="0" step="0.01" value={form.import} onChange={e=>setForm(f=>({...f,import:e.target.value}))} style={inp}/>},
+              ].map(({lb,el})=>(
+                <div key={lb}><label style={{fontSize:12,color:"#6B7280",display:"block",marginBottom:3,fontWeight:600}}>{lb}</label>{el}</div>
+              ))}
+            </div>
+            <button onClick={handleAfegir} disabled={saving} style={{width:"100%",marginTop:18,padding:"13px",borderRadius:12,border:"none",background:saving?"#A78BFA":P,color:"white",fontWeight:700,fontSize:14,cursor:saving?"not-allowed":"pointer",boxShadow:`0 4px 12px ${P}44`}}>
+              {saving?"⏳ Desant a Google Sheets...":"💾 Desar moviment"}
+            </button>
+          </div>
+        )}
+
+        {/* MOVIMENTS */}
+        {!loading && tab==="moviments" && (
+          <div>
+            <div style={{display:"flex",gap:8,marginBottom:12,flexWrap:"wrap"}}>
+              {[["tots","Tots"],["ingres","💰 Ingressos"],["despesa","💸 Despeses"]].map(([v,lb])=>(
+                <button key={v} onClick={()=>setFilter(v)} style={{padding:"6px 12px",borderRadius:20,border:"none",cursor:"pointer",fontWeight:filter===v?700:400,background:filter===v?P:"white",color:filter===v?"white":"#6B7280",fontSize:12,boxShadow:"0 1px 3px #0001"}}>{lb}</button>
+              ))}
+              <div style={{flex:1,textAlign:"right",fontSize:11,color:"#9CA3AF",lineHeight:"32px"}}>{movsFiltered.length} registres</div>
+            </div>
+            {movsFiltered.length===0 && <div style={{textAlign:"center",color:"#9CA3AF",padding:50}}><div style={{fontSize:46,marginBottom:10}}>📭</div><p style={{fontWeight:600}}>Cap moviment.</p></div>}
+            {movsFiltered.map((m,i)=>{
+              const tipus=getTipus(m), imp=getImp(m), fotoUrl=m["Factura_URL"]||"";
+              return (
+                <div key={m["ID"]||i} style={{background:"white",borderRadius:12,padding:"11px 13px",marginBottom:8,display:"flex",alignItems:"center",gap:10,boxShadow:"0 1px 4px #0001",borderLeft:`4px solid ${tipus==="ingres"?"#059669":P}`}}>
+                  <span style={{fontSize:20}}>{tipus==="ingres"?"💰":"💸"}</span>
+                  <div style={{flex:1,minWidth:0}}>
+                    <div style={{fontWeight:600,fontSize:13,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{m["Descripció"]||"—"}</div>
+                    <div style={{fontSize:10,color:"#9CA3AF",marginTop:1}}>{m["Categoria"]||""} · {m["Data"]||""}</div>
+                  </div>
+                  <div style={{fontWeight:800,color:tipus==="ingres"?"#059669":"#DC2626",fontSize:13,whiteSpace:"nowrap"}}>{tipus==="ingres"?"+":"-"}{fmt(imp)}</div>
+                  {fotoUrl && <button onClick={()=>setFotoModal(fotoUrl)} style={{background:PL,border:"none",cursor:"pointer",borderRadius:6,padding:"4px 7px",fontSize:14}}>🧾</button>}
+                  <button onClick={()=>setDel(m["ID"])} style={{background:"none",border:"none",cursor:"pointer",color:"#D1D5DB",fontSize:15,padding:4}}>🗑️</button>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+</script>
+</body>
+</html>
