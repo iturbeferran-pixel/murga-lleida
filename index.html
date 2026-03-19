@@ -1,31 +1,79 @@
-import React, { useState } from 'react';
-import './App.css';
-
-function App() {
-  const [tab, setTab] = useState('financials');
-
-  return (
-    <div className="app-container">
-      <nav className="tab-navigation">
-        <button onClick={() => setTab('financials')}>Financial Management</button>
-        <button onClick={() => setTab('upload')}>Image Upload</button>
-      </nav>
-      <div className="tab-content">
-        {tab === 'financials' && <FinancialManagement />}
-        {tab === 'upload' && <ImageUpload />}
-      </div>
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Financial Management</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background-color: black;
+            color: white;
+            margin: 0;
+            padding: 0;
+        }
+        header {
+            background-color: burgundy;
+            padding: 1em;
+            text-align: center;
+        }
+        nav {
+            display: flex;
+            justify-content: center;
+            background-color: #333;
+        }
+        nav a {
+            padding: 14px 20px;
+            text-decoration: none;
+            color: white;
+            border-right: 1px solid white;
+            transition: background-color 0.3s;
+        }
+        nav a:hover {
+            background-color: burgundy;
+        }
+        .tab-content {
+            padding: 20px;
+        }
+        .tab {
+            display: none;
+        }
+        .active {
+            display: block;
+        }
+    </style>
+    <script>
+        function showTab(tabName) {
+            var tabs = document.querySelectorAll('.tab');
+            tabs.forEach(function(tab) {
+                tab.classList.remove('active');
+            });
+            document.getElementById(tabName).classList.add('active');
+        }
+    </script>
+</head>
+<body>
+    <header>
+        <h1>Financial Management</h1>
+    </header>
+    <nav>
+        <a href="#" onclick="showTab('movement')">Movement</a>
+        <a href="#" onclick="showTab('history')">History</a>
+        <a href="#" onclick="showTab('graphics')">Graphics</a>
+    </nav>
+    <div class="tab-content">
+        <div id="movement" class="tab active">
+            <h2>Movement</h2>
+            <p>This section will include details about financial movements.</p>
+        </div>
+        <div id="history" class="tab">
+            <h2>History</h2>
+            <p>This section will display the financial history.</p>
+        </div>
+        <div id="graphics" class="tab">
+            <h2>Graphics</h2>
+            <p>This section will display various graphics related to finances.</p>
+        </div>
     </div>
-  );
-}
-
-function FinancialManagement() {
-  // Financial management logic with Google Sheets integration
-  return <div>Financial Management Component</div>;
-}
-
-function ImageUpload() {
-  // Logic for image upload to Google Drive
-  return <div>Image Upload Component</div>;
-}
-
-export default App;
+</body>
+</html>
