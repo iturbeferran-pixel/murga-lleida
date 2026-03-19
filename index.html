@@ -1,9 +1,31 @@
-<html>
-<head>
-    <title>La Murga Lleida Economic Management System</title>
-</head>
-<body>
-    <div id="app"></div>
-    <script src="/path/to/your/react/app.js"></script>
-</body>
-</html>
+import React, { useState } from 'react';
+import './App.css';
+
+function App() {
+  const [tab, setTab] = useState('financials');
+
+  return (
+    <div className="app-container">
+      <nav className="tab-navigation">
+        <button onClick={() => setTab('financials')}>Financial Management</button>
+        <button onClick={() => setTab('upload')}>Image Upload</button>
+      </nav>
+      <div className="tab-content">
+        {tab === 'financials' && <FinancialManagement />}
+        {tab === 'upload' && <ImageUpload />}
+      </div>
+    </div>
+  );
+}
+
+function FinancialManagement() {
+  // Financial management logic with Google Sheets integration
+  return <div>Financial Management Component</div>;
+}
+
+function ImageUpload() {
+  // Logic for image upload to Google Drive
+  return <div>Image Upload Component</div>;
+}
+
+export default App;
